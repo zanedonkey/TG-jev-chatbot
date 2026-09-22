@@ -1,7 +1,7 @@
 {
   "name": "tg-relay-bot",
   "version": "1.0.0",
-  "description": "Two-way Telegram relay bot — users message the bot, you reply through it.",
+  "description": "Two-way Telegram relay bot using forum topics in a supergroup (grammY + SQLite).",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -13,8 +13,11 @@
     "telegram",
     "bot",
     "relay",
+    "forum",
+    "topics",
     "typescript",
-    "grammy"
+    "grammy",
+    "sqlite"
   ],
   "author": "zanedonkey",
   "license": "MIT",
@@ -22,10 +25,12 @@
     "node": ">=20"
   },
   "dependencies": {
+    "better-sqlite3": "^11.8.1",
     "dotenv": "^16.4.7",
     "grammy": "^1.35.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.13.10",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"

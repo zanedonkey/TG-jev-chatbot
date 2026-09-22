@@ -1,53 +1,93 @@
 # tg-relay-bot
 
-Two-way Telegram relay bot — users message the bot, you reply through it.
+Two-way Telegram **support relay** using **forum topics** in a supergroup.
 
-一个轻量的 **双向 Telegram 中继机器人**：用户私聊 bot → 消息转发到管理员；管理员在 bot 会话里 **回复** 那条消息 → bot 把回复送回原用户。适合个人客服、匿名留言、小团队值班等场景。
+用户私聊 Bot → 自动在论坛超级群里开一个专属话题；工作人员在话题里回复 → Bot 把内容送回用户私聊。适合客服 / 值班 / 多座席协作。
 
-## Why two-way relay?
+## Architecture
 
-Telegram 不支持把「别人私聊 bot 的消息」直接变成你的会话线程。常见做法是让 bot 当中间人：
+```
+┌─────────────┐  private DM   ┌─────────┐  createForumTopic / copyMessage
+│  End user   │ ────────────► │   Bot   │ ──────────────────────────────────┐
+└─────────────┘               └────┬────┘                                   │
+       ▲                           │                                        ▼
+       │                           │ staff reply                    ┌───────────────────┐
+       │   copyMessage             │ in topic                       │ Forum Supergroup  │
+       └───────────────────────────┘                                │  ├─ Topic: Alice  │
+                                                                    │  ├─ Topic: Bob    │
+                                                                    │  └─ General (ignore)
+                                                                    └───────────────────┘
 
-1. **用户 → 管理员**：bot 把用户消息复制到 `ADMIN_CHAT_ID`，并标注来源。
-2. **管理员 → 用户**：你在 bot 聊天里 **Reply** 那条中继消息，bot 再把内容送回原用户。
+Persist: SQLite  user_id  ↔  message_thread_id  (survives restarts)
+```
 
-这样你不需要把个人号暴露给陌生人，也能一对一回复。
+1. User DMs the bot (`/start` then any content, or just a first message).
+2. Bot creates a **forum topic** named like `Alice · 123456789` and stores the mapping.
+3. Every later user DM is **copied** into that topic (`message_thread_id`).
+4. When staff posts **inside that topic**, the bot copies the message back to the user’s private chat.
+5. Messages in the **General** topic (`message_thread_id = 1`) are ignored.
 
 ## Features
 
-- ✅ 用户 `/start`：中英双语简短说明
-- ✅ 文字消息中继；图片 / 文件等通过 `copyMessage` 复制
-- ✅ 管理员 Reply 中继消息即可回覆用户
-- ✅ 管理员 `/whoami`：打印自己的 chat id，方便配置
-- ✅ TypeScript + [grammY](https://grammy.dev/) + Node 20+
-- ⚠️ 消息映射存在 **内存 Map** 中：进程重启后旧消息无法再 Reply 关联（v0 可接受；生产可换 Redis）
+- ✅ Forum-topic per user (multi-staff can share one group)
+- ✅ SQLite persistence (`better-sqlite3`) — mappings survive restarts
+- ✅ `copyMessage` preserves text / photos / documents / stickers / etc.
+- ✅ Bilingual `/start` (中文 + English)
+- ✅ `/whoami` in private (debug user id); `/groupid` inside the group (debug chat id)
+- ✅ Loop-safe: bot’s own messages are never relayed
+- ✅ Auto-recreate topic if Telegram reports the thread was deleted
 
 ## Requirements
 
 - Node.js **20+**
-- 一个 Telegram Bot Token（[@BotFather](https://t.me/BotFather)）
-- 你的 Telegram **chat id**（用作 `ADMIN_CHAT_ID`）
+- Telegram Bot token from [@BotFather](https://t.me/BotFather)
+- A **supergroup with Topics enabled**
+- Bot must be **administrator** in that group (see permissions below)
+
+## Bot permissions (important)
+
+In the forum supergroup, add the bot as an **administrator** with at least:
+
+| Permission            | Why                                      |
+|-----------------------|------------------------------------------|
+| **Manage topics**     | `createForumTopic`                       |
+| **Post messages**     | Copy user messages into topics           |
+| **Delete messages**   | Optional; useful for moderation          |
+
+Privacy note: bots that are **group admins** receive all group messages (including staff replies inside topics). That is required for staff → user relay. If the bot is only a member (not admin) and privacy mode is on, it will **not** see staff replies.
+
+## How to get `FORUM_GROUP_ID`
+
+Supergroup ids are **negative** and usually look like `-100xxxxxxxxxx`.
+
+**Reliable method (recommended):**
+
+1. Add the bot to the group as admin.
+2. Start the bot with a temporary/placeholder `FORUM_GROUP_ID` **or** put the real id once you have it.
+3. In the group, send: `/groupid`
+4. The bot replies with `This chat id: -100…` — copy that into `.env` as `FORUM_GROUP_ID`.
+
+**Alternatives:**
+
+- Forward a group message to [@userinfobot](https://t.me/userinfobot) / [@getidsbot](https://t.me/getidsbot) and read the chat id.
+- Call `getUpdates` after posting in the group:  
+  `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` and look for `"chat":{"id":-100…}`.
 
 ## Quick start
 
-### 1. 创建 Bot（BotFather）
+### 1. Create the bot (BotFather)
 
-1. 打开 [@BotFather](https://t.me/BotFather)
-2. `/newbot`，按提示设置名称与 username
-3. 复制拿到的 **HTTP API token** → 填入 `.env` 的 `BOT_TOKEN`
+1. Open [@BotFather](https://t.me/BotFather) → `/newbot`
+2. Copy the **HTTP API token** → `BOT_TOKEN`
 
-### 2. 获取 ADMIN_CHAT_ID
+### 2. Create a forum-enabled supergroup
 
-最简单：
+1. Create a **Supergroup** (not a basic group).
+2. Group settings → **Topics** → enable.
+3. Add your bot as **administrator** with **Manage topics** + **Post messages**.
+4. Obtain `FORUM_GROUP_ID` (see above).
 
-1. 先临时把 `ADMIN_CHAT_ID` 设成你自己的数字 id（若还不知道，可先用 [@userinfobot](https://t.me/userinfobot) 看自己的 id）
-2. 或：把任意占位数字写上、启动 bot，用 **你的账号** 私聊 bot 发 `/whoami`（需已是 admin；首次可用 userinfobot）
-3. 推荐流程：
-   - 私聊 [@userinfobot](https://t.me/userinfobot) 拿到 `Id`
-   - 或启动后用自己的号对 bot 发任意消息，看控制台 / 中继头里的 `chat_id=`
-4. 配置好后，管理员在 bot 私聊里发 `/whoami` 可再次确认
-
-### 3. 配置环境变量
+### 3. Configure env
 
 ```bash
 git clone https://github.com/zanedonkey/tg-relay-bot.git
@@ -55,56 +95,73 @@ cd tg-relay-bot
 cp .env.example .env
 ```
 
-编辑 `.env`：
-
 ```env
 BOT_TOKEN=123456:ABC-DEF...
-ADMIN_CHAT_ID=123456789
+FORUM_GROUP_ID=-1001234567890
+# Optional:
+# TOPIC_NAME_TEMPLATE={name} · {id}
+# DB_PATH=./data/mappings.sqlite
 ```
 
-### 4. 安装并运行
+### 4. Install & run
 
 ```bash
 npm install
-npm run dev          # 开发：tsx 直接跑 TypeScript
-# 或生产：
+npm run dev          # development (tsx)
+# production:
 npm run build && npm start
 ```
 
-看到 `Bot @your_bot is running` 即表示长轮询已启动。
+You should see: `Bot @your_bot … running. Forum group: -100…`
 
-## 回复是怎么串起来的？（Reply threading）
+### 5. Staff workflow
 
-```
-用户 ──私聊──► Bot ──复制+标注──► 管理员（ADMIN_CHAT_ID）
-                                      │
-                              管理员 Reply 该消息
-                                      │
-用户 ◄──复制消息── Bot ◄─────────────┘
-```
-
-- Bot 在内存里维护：`管理员侧 message_id → 用户 chat_id`
-- 管理员必须 **回复（Reply）** 那条中继消息，bot 才能知道送给谁
-- **重启 bot 会清空 Map**：旧消息再 Reply 会提示找不到映射；让用户重新发一条即可
+1. User messages the bot in private → a new topic appears in the group.
+2. Staff open that topic and **reply normally** (no special Reply-to required).
+3. Bot delivers the staff message to the user’s private chat with the bot.
 
 ## Environment variables
 
-| Variable         | Required | Description                                      |
-|------------------|----------|--------------------------------------------------|
-| `BOT_TOKEN`      | Yes      | BotFather 发放的 token                           |
-| `ADMIN_CHAT_ID`  | Yes      | 接收中继消息的管理员私聊 chat id（数字）         |
+| Variable               | Required | Description |
+|------------------------|----------|-------------|
+| `BOT_TOKEN`            | Yes      | BotFather token |
+| `FORUM_GROUP_ID`       | Yes      | Forum supergroup id (e.g. `-100…`) |
+| `TOPIC_NAME_TEMPLATE`  | No       | Default `{name} · {id}`. Also `{username}` |
+| `DB_PATH`              | No       | SQLite file path (default `./data/mappings.sqlite`) |
 
 ## Scripts
 
-| Script        | Description                |
-|---------------|----------------------------|
-| `npm run dev` | `tsx src/index.ts` 开发热跑 |
-| `npm run build` | `tsc` 编译到 `dist/`     |
-| `npm start`   | `node dist/index.js` 生产  |
+| Script          | Description                |
+|-----------------|----------------------------|
+| `npm run dev`   | `tsx src/index.ts`         |
+| `npm run build` | `tsc` → `dist/`            |
+| `npm start`     | `node dist/index.js`       |
+
+## Persistence
+
+Mappings live in SQLite via [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3):
+
+```text
+data/mappings.sqlite
+  mappings(user_id PK, thread_id UNIQUE, display_name, created_at)
+```
+
+`data/` is gitignored. If you wipe the DB, old topics become “unknown” (staff replies there won’t relay); the next user DM will create a **new** topic.
+
+> **Note:** `better-sqlite3` needs a native build toolchain (`build-essential` / Xcode CLT). On this project it is pinned to a Node 20–compatible release. If install fails on your machine, install compiler tools first, or open an issue.
+
+## Limitations
+
+- **Media:** anything Telegram `copyMessage` supports (text, photo, video, document, audio, voice, sticker, animation, …). Polls / some service message types are not relayed.
+- **General topic** is ignored on purpose (avoid noise / accidental loops).
+- **Deleted topics:** bot tries to recreate on the next user message.
+- **Blocked users:** staff → user delivery fails if the user blocked the bot; an error note is posted in the topic.
+- **Single forum group:** one `FORUM_GROUP_ID` per process.
+- **Commands** in private (except `/start`, `/whoami`) are not relayed as content.
 
 ## Suggested GitHub topics
 
-`telegram` · `bot` · `typescript` · `relay` · `grammy`
+`telegram` · `bot` · `typescript` · `relay` · `forum` · `grammy` · `sqlite`
 
 ## License
 

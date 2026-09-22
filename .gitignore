@@ -11,6 +11,13 @@ build/
 .env.local
 .env.*.local
 
+# Runtime data (user ↔ topic mappings)
+data/*
+!data/.gitkeep
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
 # Logs
 logs/
 *.log
