@@ -161,54 +161,73 @@ function scoreSection(section: KnowledgeSection, userTerms: string[]): number {
 }
 
 /**
- * Suggest a reply for staff review.
+ * Rank up to `limit` reasonable reply options for staff.
+ * Scripts with score >= 1 first (desc), then knowledge sections with overlap >= 1 (desc).
+ * Deduplicated by normalized answer text.
+ */
+export function suggestTop(userText: string, limit = 3): JevSuggestion[] {
+  const text = (userText || "").trim();
+  if (!text || limit <= 0) return [];
+
+  const userNorm = normalize(text);
+  const ranked: Array<JevSuggestion & { score: number }> = [];
+
+  for (const entry of scripts) {
+    const s = scoreScript(entry, userNorm);
+    if (s >= 1) {
+      ranked.push({
+        source: "script",
+        title: entry.question || entry.id,
+        answer: entry.answer,
+        scriptId: entry.id,
+        score: s,
+      });
+    }
+  }
+  ranked.sort((a, b) => b.score - a.score);
+
+  const userTerms = extractTerms(text);
+  if (userTerms.length > 0) {
+    const knowledgeHits: Array<JevSuggestion & { score: number }> = [];
+    for (const sec of sections) {
+      const s = scoreSection(sec, userTerms);
+      if (s >= 1) {
+        knowledgeHits.push({
+          source: "knowledge",
+          title: sec.title,
+          answer: sec.body,
+          score: s,
+        });
+      }
+    }
+    knowledgeHits.sort((a, b) => b.score - a.score);
+    ranked.push(...knowledgeHits);
+  }
+
+  const out: JevSuggestion[] = [];
+  const seenAnswers = new Set<string>();
+  for (const item of ranked) {
+    const key = normalize(item.answer);
+    if (!key || seenAnswers.has(key)) continue;
+    seenAnswers.add(key);
+    out.push({
+      source: item.source,
+      title: item.title,
+      answer: item.answer,
+      scriptId: item.scriptId,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Suggest a single best reply for staff review (compat wrapper).
  * Prefer fixed scripts (score >= 1), else best knowledge section (overlap >= 1).
  */
 export function suggest(userText: string): JevSuggestion | null {
-  const text = (userText || "").trim();
-  if (!text) return null;
-
-  const userNorm = normalize(text);
-
-  let bestScript: ScriptEntry | null = null;
-  let bestScriptScore = 0;
-  for (const entry of scripts) {
-    const s = scoreScript(entry, userNorm);
-    if (s > bestScriptScore) {
-      bestScriptScore = s;
-      bestScript = entry;
-    }
-  }
-  if (bestScript && bestScriptScore >= 1) {
-    return {
-      source: "script",
-      title: bestScript.question || bestScript.id,
-      answer: bestScript.answer,
-      scriptId: bestScript.id,
-    };
-  }
-
-  const userTerms = extractTerms(text);
-  if (userTerms.length === 0) return null;
-
-  let bestSec: KnowledgeSection | null = null;
-  let bestSecScore = 0;
-  for (const sec of sections) {
-    const s = scoreSection(sec, userTerms);
-    if (s > bestSecScore) {
-      bestSecScore = s;
-      bestSec = sec;
-    }
-  }
-  if (bestSec && bestSecScore >= 1) {
-    return {
-      source: "knowledge",
-      title: bestSec.title,
-      answer: bestSec.body,
-    };
-  }
-
-  return null;
+  const top = suggestTop(userText, 1);
+  return top[0] ?? null;
 }
 
 // Load once at import; callers may call reloadJevData() later.

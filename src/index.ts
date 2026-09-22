@@ -6,8 +6,8 @@
  * 2. On first content message, bot creates a forum topic in FORUM_GROUP_ID
  *    and stores userId ↔ threadId in SQLite.
  * 3. Subsequent user DMs are copied into that topic (message_thread_id).
- * 4. After a user text DM is relayed, Jev may post a staff-only suggested reply
- *    (scripts → knowledge) with a "发送给客户" button — never auto-sent.
+ * 4. After a user text DM is relayed, Jev may post up to three staff-only
+ *    suggested replies (scripts → knowledge) with 发送①/②/③ — never auto-sent.
  * 5. Staff replies inside the topic → bot copies the reply back to the user DM.
  * 6. Learn-from-chats v1: remember last user text; when staff/Jev reply delivers,
  *    queue a pending Q&A for /learn review → scripts.json / knowledge.md.
@@ -18,7 +18,7 @@ import { Bot, Context, InlineKeyboard } from "grammy";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MappingStore } from "./store.js";
-import { suggest } from "./jev.js";
+import { suggestTop } from "./jev.js";
 import {
   appendKnowledgeSection,
   appendScriptEntry,
@@ -194,7 +194,7 @@ function setupChecklistText(): string {
     "",
     "运维小提示：",
     "• 编辑 data/scripts.json（固定话术）、data/knowledge.md（知识库）后可重启，或用 /learn 入库后自动热重载",
-    "• 客服在用户话题里回复，或点 Jev「发送给客户」→ 成功送达后会收集问答候选",
+    "• 客服在用户话题里回复，或点 Jev「发送①/②/③」（最多三条可选）→ 成功送达后会收集问答候选",
     "• 私聊 /learn 审核待入库问答（入库话术 / 入库知识 / 忽略）",
     "• 群内发 /groupid 可核对群 id；私聊 /whoami 看自己的 user id",
     "• 新手图文：docs/SETUP.zh.md",
@@ -218,32 +218,65 @@ function setupModeDmHint(): string {
   ].join("\n");
 }
 
+const CIRCLE_NUMS = ["①", "②", "③"] as const;
+/** Telegram hard limit for message text */
+const TG_MSG_MAX = 4096;
+
+function truncatePreview(text: string, maxChars: number): string {
+  const t = text.trim();
+  if (t.length <= maxChars) return t;
+  if (maxChars <= 1) return "…";
+  return t.slice(0, maxChars - 1) + "…";
+}
+
 async function postJevSuggestion(
   userId: number,
   threadId: number,
   userText: string,
 ): Promise<void> {
   if (!JEV_ENABLED) return;
-  const result = suggest(userText);
-  if (!result || result.source === "none" || !result.answer.trim()) return;
+  const results = suggestTop(userText, 3).filter(
+    (r) => r.source !== "none" && r.answer.trim(),
+  );
+  if (results.length === 0) return;
 
-  const suggestionId = store.saveJevSuggestion(userId, threadId, result.answer);
-  const header = `💡 Jev 建议回复（来源：${sourceLabel(result.source)}）`;
-  const body = `${header}\n\n${result.answer}`;
-  // Plain text — avoid parse_mode breakage from KB/script content
-  const keyboard = new InlineKeyboard().text(
-    "发送给客户",
-    `jev:${suggestionId}`,
+  const savedIds: string[] = [];
+  const previews: string[] = [];
+  const keyboard = new InlineKeyboard();
+
+  // Reserve room for header + separators; split remaining across options
+  const header =
+    "💡 Jev 建议回复（选一条发给客户；都不合适就直接在话题里打字）";
+  const overhead = header.length + 2 + results.length * 12; // labels / newlines
+  const perOpt = Math.max(
+    80,
+    Math.floor((TG_MSG_MAX - overhead) / results.length),
   );
 
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]!;
+    const id = store.saveJevSuggestion(userId, threadId, r.answer);
+    savedIds.push(id);
+    const circle = CIRCLE_NUMS[i] ?? String(i + 1);
+    const label = sourceLabel(r.source);
+    const preview = truncatePreview(r.answer, perOpt);
+    previews.push(`${circle}（${label}）${preview}`);
+    keyboard.text(`发送${circle}`, `jev:${id}`);
+  }
+
+  const body = `${header}\n\n${previews.join("\n\n")}`;
+  // Final safety clip if somehow still over limit
+  const safeBody =
+    body.length <= TG_MSG_MAX ? body : body.slice(0, TG_MSG_MAX - 1) + "…";
+
   try {
-    await bot.api.sendMessage(FORUM_GROUP_ID, body, {
+    await bot.api.sendMessage(FORUM_GROUP_ID, safeBody, {
       message_thread_id: threadId,
       reply_markup: keyboard,
     });
   } catch (err) {
     console.error("Failed to post Jev suggestion:", err);
-    store.deleteJevSuggestion(suggestionId);
+    for (const id of savedIds) store.deleteJevSuggestion(id);
   }
 }
 
@@ -433,7 +466,7 @@ bot.command("learn", async (ctx) => {
       [
         "📭 暂无待审核的学习问答。",
         "",
-        "客户私聊发文字 → 客服在话题里回复（或点 Jev「发送给客户」）并成功送达后，问答会出现在这里。",
+        "客户私聊发文字 → 客服在话题里回复（或点 Jev「发送①/②/③」）并成功送达后，问答会出现在这里。",
         "审核通过可写入固定话术（scripts.json）或知识库（knowledge.md）。",
         "（本版本不调用模型总结；后续版本可能会）",
       ].join("\n"),
@@ -572,7 +605,7 @@ bot.on("callback_query:data", async (ctx) => {
     return;
   }
 
-  // ─── Jev 「发送给客户」 ───────────────────────────────────────────
+  // ─── Jev 「发送①/②/③」 ───────────────────────────────────────────
   if (!data.startsWith("jev:")) return;
 
   const suggestionId = data.slice("jev:".length);

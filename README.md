@@ -2,7 +2,7 @@
 
 Two-way Telegram **support relay** using **forum topics** in a supergroup, plus **Jev suggested replies** so merchants can answer customers faster.
 
-用户私聊 Bot → 自动在论坛超级群里开一个专属话题；**Jev 先查固定话术，再查店铺知识库**，把建议回复发到**客服话题**供人工确认；工作人员点「发送给客户」或自己打字回复 → Bot 把内容送回用户私聊。 成功送达的问答可进 **`/learn` 审核**，写入话术/知识库，让 Bot 越用越聪明（本版不调用模型总结）。
+用户私聊 Bot → 自动在论坛超级群里开一个专属话题；**Jev 先查固定话术，再查店铺知识库**，把最多三条建议回复发到**客服话题**供人工确认；工作人员点「发送①/②/③」或自己打字回复 → Bot 把内容送回用户私聊。 成功送达的问答可进 **`/learn` 审核**，写入话术/知识库，让 Bot 越用越聪明（本版不调用模型总结）。
 
 ---
 
@@ -44,7 +44,7 @@ Two-way Telegram **support relay** using **forum topics** in a supergroup, plus 
 │  End user   │ ────────────► │   Bot   │ ──────────────────────────────────┐
 └─────────────┘               └────┬────┘                                   │
        ▲                           │                                        ▼
-       │                           │ staff reply / Jev「发送给客户」  ┌───────────────────┐
+       │                           │ staff reply / Jev「发送①/②/③」  ┌───────────────────┐
        │   copyMessage / send      │ in topic                       │ Forum Supergroup  │
        └───────────────────────────┘                                │  ├─ Topic: Alice  │
                                                                     │  │   + 💡 Jev 建议 │
@@ -58,8 +58,8 @@ Persist: SQLite  user_id ↔ message_thread_id  (+ jev_suggestions, learn_candid
 1. User DMs the bot (`/start` then any content, or just a first message).
 2. Bot creates a **forum topic** named like `Alice · 123456789` and stores the mapping.
 3. Every later user DM is **copied** into that topic (`message_thread_id`).
-4. For **text** DMs, **Jev** may post a staff-only suggestion in the same topic (never auto-sent to the user).
-5. When staff posts **inside that topic**, or clicks **发送给客户**, the bot delivers to the user’s private chat.
+4. For **text** DMs, **Jev** may post **up to three** staff-only suggestions in the same topic (never auto-sent to the user).
+5. When staff posts **inside that topic**, or clicks **发送① / 发送② / 发送③**, the bot delivers to the user’s private chat.
 6. Messages in the **General** topic (`message_thread_id = 1`) are ignored.
 
 ## Jev suggested replies
@@ -68,24 +68,27 @@ Goal: help merchants answer **fast** with reusable copy — **not** urgency/spam
 
 ### Matching order
 
-1. **`data/scripts.json`** — fixed FAQ / script table. Score by case-insensitive keyword (and optional `question`) hits in the user text. Best script with score ≥ 1 wins.
-2. Else **`data/knowledge.md`** — Markdown sections (`## 标题` + body). Score by overlapping meaningful terms (CJK runs or Latin words, length ≥ 2). Best section with overlap ≥ 1 wins.
-3. Else **no post** (skip noisy “未匹配” spam).
-
-Scripts always beat knowledge when both could match.
+1. **`data/scripts.json`** — fixed FAQ / script table. Score by case-insensitive keyword (and optional `question`) hits in the user text. All scripts with score ≥ 1, sorted descending.
+2. Then **`data/knowledge.md`** — Markdown sections (`## 标题` + body). Score by overlapping meaningful terms (CJK runs or Latin words, length ≥ 2). Sections with overlap ≥ 1, sorted descending, fill remaining slots.
+3. Take the top **最多三条可选** (default 3), deduplicated by normalized answer text. Scripts rank ahead of knowledge overall.
+4. Else **no post** (skip noisy “未匹配” spam).
 
 ### Staff UX
 
-- Suggestion appears **only in the user’s forum topic**, e.g.:
+- Up to three options appear **only in the user’s forum topic**, e.g.:
 
   ```
-  💡 Jev 建议回复（来源：固定话术 / 店铺知识库）
-  …answer…
-  [发送给客户]
+  💡 Jev 建议回复（选一条发给客户；都不合适就直接在话题里打字）
+
+  ①（固定话术）…
+  ②（店铺知识库）…
+  ③ …
+
+  [发送①] [发送②] [发送③]
   ```
 
-- Clicking **发送给客户** sends that answer to the user’s DM once and clears the button.
-- Staff can still type any free-text (or media) reply in the topic; that relays as before.
+- Clicking **发送① / 发送② / 发送③** sends that option’s full answer to the user’s DM once and clears the buttons.
+- Staff can still type any free-text (or media) reply in the topic if none fit; that relays as before.
 - Bot-posted suggestions are **not** relayed back to the user (loop-safe via `botId` / `is_bot`).
 
 ### Edit merchant content
@@ -107,7 +110,7 @@ Disable with `JEV_ENABLED=0`.
 Goal: the bot gets smarter over time from **real** customer ↔ staff Q&A — **merchant reviews first**, no LLM in this version.
 
 1. User text DM is relayed → bot remembers `last_question` for that user.
-2. Staff free-text reply in the topic (or Jev **发送给客户**) **successfully delivered** → if Q/A pass length checks, insert a **pending** candidate (`source: staff|jev`).
+2. Staff free-text reply in the topic (or Jev **发送①/②/③**) **successfully delivered** → if Q/A pass length checks, insert a **pending** candidate (`source: staff|jev`).
 3. Operator DMs **`/learn`**: see newest pending items; buttons **入库话术** / **入库知识** / **忽略**.
 4. Approve → append `data/scripts.json` or `data/knowledge.md`, then **`reloadJevData()`** so matching picks up entries without a full restart when possible.
 
@@ -120,7 +123,7 @@ Goal: the bot gets smarter over time from **real** customer ↔ staff Q&A — **
 - ✅ Forum-topic per user (multi-staff can share one group)
 - ✅ SQLite persistence (`better-sqlite3`) — mappings survive restarts
 - ✅ `copyMessage` preserves text / photos / documents / stickers / etc.
-- ✅ **Jev assist live**: scripts → knowledge → topic suggestion → staff send
+- ✅ **Jev assist live**: scripts → knowledge → up to 3 topic options → staff send
 - ✅ **Learn-from-chats v1**: capture Q&A → `/learn` review → scripts / knowledge (no LLM yet)
 - ✅ Chinese-first onboarding: [`docs/SETUP.zh.md`](./docs/SETUP.zh.md), `/setup`, `/help`
 - ✅ **SETUP_MODE**: leave `FORUM_GROUP_ID` empty to run guided setup (`/groupid` still works)
@@ -185,7 +188,7 @@ You should see: `Bot @your_bot … running. Forum group: -100…` (or `SETUP MOD
 ### Staff workflow
 
 1. User messages the bot in private → a new topic appears in the group.
-2. If the text matches scripts/knowledge, a **💡 Jev 建议回复** appears with **发送给客户**.
+2. If the text matches scripts/knowledge, a **💡 Jev 建议回复** appears with **最多三条可选**（**发送① / 发送② / 发送③**）.
 3. Staff click the button **or** reply normally in the topic.
 4. Bot delivers to the user’s private chat with the bot.
 
@@ -238,7 +241,7 @@ Committed sample content: `data/scripts.json`, `data/knowledge.md`. Runtime DB f
 ## Limitations
 
 - **Media:** anything Telegram `copyMessage` supports (text, photo, video, document, audio, voice, sticker, animation, …). Polls / some service message types are not relayed.
-- **Jev v1:** suggestions only for **user text** DMs (not photos etc.); no auto-send without the button.
+- **Jev v1:** up to **three** suggestions only for **user text** DMs (not photos etc.); no auto-send without a send button.
 - **Learn v1:** original Q&A only (no model summary); private `/learn` review; optional `LEARN_ADMIN_IDS`.
 - **General topic** is ignored on purpose (avoid noise / accidental loops).
 - **Deleted topics:** bot tries to recreate on the next user message.
