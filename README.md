@@ -2,7 +2,7 @@
 
 Two-way Telegram **support relay** using **forum topics** in a supergroup, plus **Jev suggested replies** so merchants can answer customers faster.
 
-用户私聊 Bot → 自动在论坛超级群里开一个专属话题；**Jev 先查固定话术，再查店铺知识库**，把建议回复发到**客服话题**供人工确认；工作人员点「发送给客户」或自己打字回复 → Bot 把内容送回用户私聊。
+用户私聊 Bot → 自动在论坛超级群里开一个专属话题；**Jev 先查固定话术，再查店铺知识库**，把建议回复发到**客服话题**供人工确认；工作人员点「发送给客户」或自己打字回复 → Bot 把内容送回用户私聊。 成功送达的问答可进 **`/learn` 审核**，写入话术/知识库，让 Bot 越用越聪明（本版不调用模型总结）。
 
 ---
 
@@ -52,7 +52,7 @@ Two-way Telegram **support relay** using **forum topics** in a supergroup, plus 
                                                                     │  └─ General (ignore)
                                                                     └───────────────────┘
 
-Persist: SQLite  user_id ↔ message_thread_id  (+ jev_suggestions for button callbacks)
+Persist: SQLite  user_id ↔ message_thread_id  (+ jev_suggestions, learn_candidates, last_question)
 ```
 
 1. User DMs the bot (`/start` then any content, or just a first message).
@@ -101,12 +101,27 @@ Sample Chinese copy covers 营业时间、运费/配送、退换货、付款方�
 
 Disable with `JEV_ENABLED=0`.
 
+
+## Learn from chats (v1)
+
+Goal: the bot gets smarter over time from **real** customer ↔ staff Q&A — **merchant reviews first**, no LLM in this version.
+
+1. User text DM is relayed → bot remembers `last_question` for that user.
+2. Staff free-text reply in the topic (or Jev **发送给客户**) **successfully delivered** → if Q/A pass length checks, insert a **pending** candidate (`source: staff|jev`).
+3. Operator DMs **`/learn`**: see newest pending items; buttons **入库话术** / **入库知识** / **忽略**.
+4. Approve → append `data/scripts.json` or `data/knowledge.md`, then **`reloadJevData()`** so matching picks up entries without a full restart when possible.
+
+- Not collected in **SETUP_MODE**; service / non-text messages are ignored.
+- Optional allowlist: `LEARN_ADMIN_IDS` (comma-separated Telegram user ids). If unset, any private chatter can review — tighten this in production.
+- Model summarization is **not** wired yet; later versions may summarize before library write.
+
 ## Features
 
 - ✅ Forum-topic per user (multi-staff can share one group)
 - ✅ SQLite persistence (`better-sqlite3`) — mappings survive restarts
 - ✅ `copyMessage` preserves text / photos / documents / stickers / etc.
 - ✅ **Jev assist live**: scripts → knowledge → topic suggestion → staff send
+- ✅ **Learn-from-chats v1**: capture Q&A → `/learn` review → scripts / knowledge (no LLM yet)
 - ✅ Chinese-first onboarding: [`docs/SETUP.zh.md`](./docs/SETUP.zh.md), `/setup`, `/help`
 - ✅ **SETUP_MODE**: leave `FORUM_GROUP_ID` empty to run guided setup (`/groupid` still works)
 - ✅ Bilingual `/start` (中文 + English); admin tip for `/setup`
@@ -195,6 +210,7 @@ You should see: `Bot @your_bot … running. Forum group: -100…` (or `SETUP MOD
 | `/help` | Private / group | Command list |
 | `/groupid` | Forum group | Operators — print `FORUM_GROUP_ID=…` line |
 | `/whoami` | Private | Debug user / chat ids |
+| `/learn` | Private | Review pending Q&A → write scripts/knowledge (optional `LEARN_ADMIN_IDS`) |
 
 ## Scripts
 
@@ -210,8 +226,9 @@ Mappings live in SQLite via [`better-sqlite3`](https://github.com/WiseLibs/bette
 
 ```text
 data/mappings.sqlite
-  mappings(user_id PK, thread_id UNIQUE, display_name, created_at)
+  mappings(user_id PK, thread_id UNIQUE, display_name, created_at, last_question)
   jev_suggestions(id PK, user_id, thread_id, answer, created_at)
+  learn_candidates(id PK, user_id, question, answer, source, status, created_at)
 ```
 
 Committed sample content: `data/scripts.json`, `data/knowledge.md`. Runtime DB files under `data/` stay gitignored. If you wipe the DB, old topics become “unknown” (staff replies there won’t relay); the next user DM will create a **new** topic.
@@ -222,6 +239,7 @@ Committed sample content: `data/scripts.json`, `data/knowledge.md`. Runtime DB f
 
 - **Media:** anything Telegram `copyMessage` supports (text, photo, video, document, audio, voice, sticker, animation, …). Polls / some service message types are not relayed.
 - **Jev v1:** suggestions only for **user text** DMs (not photos etc.); no auto-send without the button.
+- **Learn v1:** original Q&A only (no model summary); private `/learn` review; optional `LEARN_ADMIN_IDS`.
 - **General topic** is ignored on purpose (avoid noise / accidental loops).
 - **Deleted topics:** bot tries to recreate on the next user message.
 - **Blocked users:** staff → user delivery fails if the user blocked the bot; an error note is posted in the topic.

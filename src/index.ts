@@ -9,6 +9,8 @@
  * 4. After a user text DM is relayed, Jev may post a staff-only suggested reply
  *    (scripts → knowledge) with a "发送给客户" button — never auto-sent.
  * 5. Staff replies inside the topic → bot copies the reply back to the user DM.
+ * 6. Learn-from-chats v1: remember last user text; when staff/Jev reply delivers,
+ *    queue a pending Q&A for /learn review → scripts.json / knowledge.md.
  */
 
 import "dotenv/config";
@@ -17,6 +19,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MappingStore } from "./store.js";
 import { suggest } from "./jev.js";
+import {
+  appendKnowledgeSection,
+  appendScriptEntry,
+  passesLengthChecks,
+  previewText,
+} from "./learn.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const FORUM_GROUP_ID_RAW = process.env.FORUM_GROUP_ID?.trim() || "";
@@ -36,6 +44,16 @@ const JEV_ENABLED =
   JEV_ENABLED_RAW === "true" ||
   JEV_ENABLED_RAW === "yes" ||
   JEV_ENABLED_RAW === "on";
+
+/** Optional allowlist for /learn. Empty = any private user may review. */
+const LEARN_ADMIN_IDS = new Set(
+  (process.env.LEARN_ADMIN_IDS ?? "")
+    .split(/[,;\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n)),
+);
 
 if (!BOT_TOKEN) {
   console.error("Missing BOT_TOKEN. Copy .env.example → .env and fill it in.");
@@ -84,6 +102,12 @@ function isForumGroup(ctx: Context): boolean {
   return !SETUP_MODE && ctx.chat?.id === FORUM_GROUP_ID;
 }
 
+function isLearnAdmin(userId: number | undefined): boolean {
+  if (userId === undefined) return false;
+  if (LEARN_ADMIN_IDS.size === 0) return true;
+  return LEARN_ADMIN_IDS.has(userId);
+}
+
 /** Service / system messages that should never be relayed */
 function isServiceMessage(msg: NonNullable<Context["message"]>): boolean {
   return Boolean(
@@ -118,6 +142,27 @@ function sourceLabel(source: "script" | "knowledge" | "none"): string {
   return "未匹配";
 }
 
+function learnSourceLabel(source: string): string {
+  if (source === "jev") return "Jev";
+  return "客服";
+}
+
+/** Capture pending Q&A after successful delivery (not in SETUP_MODE). */
+function maybeCaptureLearn(
+  userId: number,
+  answer: string,
+  source: "staff" | "jev",
+): void {
+  if (SETUP_MODE) return;
+  const question = store.getLastQuestion(userId);
+  if (!question) return;
+  if (!passesLengthChecks(question, answer)) return;
+  const id = store.tryInsertLearnCandidate(userId, question, answer, source);
+  if (id) {
+    console.log(`[learn] pending candidate ${id} (${source}) for user ${userId}`);
+  }
+}
+
 /** Operator checklist — Chinese-first; used by /setup and SETUP_MODE DMs */
 function setupChecklistText(): string {
   if (SETUP_MODE) {
@@ -145,14 +190,16 @@ function setupChecklistText(): string {
     `• BOT_TOKEN：已设置`,
     `• FORUM_GROUP_ID：已设置（${FORUM_GROUP_ID}）`,
     `• Jev 建议回复：${JEV_ENABLED ? "开启" : "关闭"}`,
+    `• 学习审核 /learn：${LEARN_ADMIN_IDS.size ? `仅允许 ${LEARN_ADMIN_IDS.size} 个管理员 id` : "任意私聊用户可审核（未设 LEARN_ADMIN_IDS）"}`,
     "",
     "运维小提示：",
-    "• 编辑 data/scripts.json（固定话术）、data/knowledge.md（知识库）后重启 Bot",
-    "• 客服在用户话题里回复，或点 Jev「发送给客户」",
+    "• 编辑 data/scripts.json（固定话术）、data/knowledge.md（知识库）后可重启，或用 /learn 入库后自动热重载",
+    "• 客服在用户话题里回复，或点 Jev「发送给客户」→ 成功送达后会收集问答候选",
+    "• 私聊 /learn 审核待入库问答（入库话术 / 入库知识 / 忽略）",
     "• 群内发 /groupid 可核对群 id；私聊 /whoami 看自己的 user id",
     "• 新手图文：docs/SETUP.zh.md",
     "",
-    "English: Fully configured. Edit scripts/knowledge, restart after changes.",
+    "English: Fully configured. Use /learn to review captured Q&A into scripts/knowledge.",
   ].join("\n");
 }
 
@@ -254,7 +301,7 @@ bot.command("start", async (ctx) => {
       "支持文字 / 图片 / 文件 / 贴纸等。",
       "Text, photos, documents, stickers, and more are supported.",
       "",
-      "管理员可发 /setup 查看配置清单。",
+      "管理员可发 /setup 查看配置清单；/learn 审核学习问答。",
     ].join("\n"),
   );
 });
@@ -293,7 +340,10 @@ bot.command("help", async (ctx) => {
       "/setup — 配置清单（SETUP_MODE 时显示还差哪步）",
       "/groupid — 在超级群里发送，获取 FORUM_GROUP_ID",
       "/whoami — 查看自己的 user id / chat id",
+      "/learn — 审核待入库问答（入库话术 / 入库知识 / 忽略）",
       "/help — 本说明",
+      "",
+      "学习功能：客户文字 + 客服/Jev 成功回复后，会产生待审问答；私聊 /learn 审核写入话术或知识库。模型总结尚未接入。",
       "",
       SETUP_MODE
         ? "当前状态：SETUP_MODE（FORUM_GROUP_ID 未设置）→ 请完成 /setup 清单。"
@@ -301,7 +351,7 @@ bot.command("help", async (ctx) => {
       "",
       "图文安装：仓库 docs/SETUP.zh.md",
       "",
-      "English: /setup checklist · /groupid in forum group · /whoami debug ids.",
+      "English: /setup checklist · /learn review Q&A · /groupid in forum group · /whoami debug ids.",
     ].join("\n"),
   );
 });
@@ -360,9 +410,169 @@ bot.command("groupid", async (ctx) => {
   );
 });
 
-/** Staff clicks 「发送给客户」 on a Jev suggestion */
+/** /learn — review pending Q&A candidates (private; optional LEARN_ADMIN_IDS) */
+bot.command("learn", async (ctx) => {
+  if (!isPrivateChat(ctx)) {
+    await ctx.reply("请私聊 Bot 发送 /learn。 / Use /learn in a private chat.");
+    return;
+  }
+  if (!isLearnAdmin(ctx.from?.id)) {
+    await ctx.reply("⛔ 你没有权限使用 /learn（需在 LEARN_ADMIN_IDS 白名单内）。");
+    return;
+  }
+  if (SETUP_MODE) {
+    await ctx.reply(
+      "当前为 SETUP_MODE，暂不收集学习问答。请先完成 FORUM_GROUP_ID 配置。",
+    );
+    return;
+  }
+
+  const total = store.countPendingLearn();
+  if (total === 0) {
+    await ctx.reply(
+      [
+        "📭 暂无待审核的学习问答。",
+        "",
+        "客户私聊发文字 → 客服在话题里回复（或点 Jev「发送给客户」）并成功送达后，问答会出现在这里。",
+        "审核通过可写入固定话术（scripts.json）或知识库（knowledge.md）。",
+        "（本版本不调用模型总结；后续版本可能会）",
+      ].join("\n"),
+    );
+    return;
+  }
+
+  const rows = store.listPendingLearn(5);
+  await ctx.reply(
+    `📚 待审核学习问答：共 ${total} 条（下列最新 ${rows.length} 条）`,
+  );
+
+  for (const row of rows) {
+    const keyboard = new InlineKeyboard()
+      .text("入库话术", `lrn:s:${row.id}`)
+      .text("入库知识", `lrn:k:${row.id}`)
+      .text("忽略", `lrn:x:${row.id}`);
+    const body = [
+      `来源：${learnSourceLabel(row.source)} · id \`${row.id}\``,
+      `Q：${previewText(row.question, 80)}`,
+      `A：${previewText(row.answer, 120)}`,
+    ].join("\n");
+    await ctx.reply(body, { reply_markup: keyboard });
+  }
+});
+
+/** Callbacks: Jev send + learn review */
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery.data;
+
+  // ─── Learn review ─────────────────────────────────────────────────
+  if (data.startsWith("lrn:")) {
+    if (!isPrivateChat(ctx) || !isLearnAdmin(ctx.from?.id)) {
+      await ctx.answerCallbackQuery({ text: "无权限", show_alert: true });
+      return;
+    }
+
+    const parts = data.split(":");
+    // lrn:s:<id> | lrn:k:<id> | lrn:x:<id>
+    if (parts.length !== 3) {
+      await ctx.answerCallbackQuery({ text: "无效按钮", show_alert: false });
+      return;
+    }
+    const action = parts[1];
+    const candidateId = parts[2];
+    const row = store.getLearnCandidate(candidateId);
+    if (!row || row.status !== "pending") {
+      await ctx.answerCallbackQuery({
+        text: "已处理或不存在",
+        show_alert: false,
+      });
+      try {
+        await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    try {
+      if (action === "x") {
+        store.setLearnStatus(candidateId, "rejected");
+        await ctx.answerCallbackQuery({ text: "已忽略" });
+        try {
+          await ctx.editMessageText(
+            `${ctx.callbackQuery.message && "text" in ctx.callbackQuery.message ? ctx.callbackQuery.message.text : ""}\n\n⏭ 已忽略`,
+          );
+        } catch {
+          try {
+            await ctx.editMessageReplyMarkup({
+              reply_markup: { inline_keyboard: [] },
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+        return;
+      }
+
+      if (action === "s") {
+        const { id } = appendScriptEntry(row.question, row.answer);
+        store.setLearnStatus(candidateId, "approved");
+        await ctx.answerCallbackQuery({ text: "已入库话术 ✅" });
+        try {
+          await ctx.editMessageText(
+            [
+              `✅ 已写入话术 scripts.json（id=${id}）`,
+              `Q：${previewText(row.question, 80)}`,
+              `A：${previewText(row.answer, 120)}`,
+            ].join("\n"),
+          );
+        } catch {
+          try {
+            await ctx.editMessageReplyMarkup({
+              reply_markup: { inline_keyboard: [] },
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+        return;
+      }
+
+      if (action === "k") {
+        const { title } = appendKnowledgeSection(row.question, row.answer);
+        store.setLearnStatus(candidateId, "approved");
+        await ctx.answerCallbackQuery({ text: "已入库知识 ✅" });
+        try {
+          await ctx.editMessageText(
+            [
+              `✅ 已写入知识库 knowledge.md（## ${title}）`,
+              `Q：${previewText(row.question, 80)}`,
+              `A：${previewText(row.answer, 120)}`,
+            ].join("\n"),
+          );
+        } catch {
+          try {
+            await ctx.editMessageReplyMarkup({
+              reply_markup: { inline_keyboard: [] },
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+        return;
+      }
+
+      await ctx.answerCallbackQuery({ text: "未知操作", show_alert: false });
+    } catch (err) {
+      console.error("Learn approve failed:", err);
+      await ctx.answerCallbackQuery({
+        text: "写入失败，请查看日志",
+        show_alert: true,
+      });
+    }
+    return;
+  }
+
+  // ─── Jev 「发送给客户」 ───────────────────────────────────────────
   if (!data.startsWith("jev:")) return;
 
   const suggestionId = data.slice("jev:".length);
@@ -378,6 +588,7 @@ bot.on("callback_query:data", async (ctx) => {
   try {
     await ctx.api.sendMessage(row.userId, row.answer);
     store.deleteJevSuggestion(suggestionId);
+    maybeCaptureLearn(row.userId, row.answer, "jev");
     await ctx.answerCallbackQuery({ text: "已发送给客户 ✅" });
     try {
       await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
@@ -422,6 +633,10 @@ bot.on("message", async (ctx) => {
 
     try {
       await ctx.api.copyMessage(mapping.userId, FORUM_GROUP_ID, msg.message_id);
+      // Learn: only text replies (not media / service)
+      if (typeof msg.text === "string" && msg.text.trim()) {
+        maybeCaptureLearn(mapping.userId, msg.text, "staff");
+      }
     } catch (err) {
       console.error("Failed to deliver staff reply to user:", err);
       try {
@@ -477,8 +692,9 @@ bot.on("message", async (ctx) => {
       }
     }
 
-    // Jev: text-only suggestions after successful relay (staff topic only)
+    // Remember last user text question for learn-from-chats (overwrite on next text)
     if (typeof msg.text === "string" && msg.text.trim()) {
+      store.setLastQuestion(ctx.from.id, msg.text.trim());
       await postJevSuggestion(ctx.from.id, threadId, msg.text);
     }
   } catch (err) {
@@ -494,6 +710,11 @@ bot.catch((err) => {
 console.log("TG-jev-chatbot starting…");
 console.log(`SQLite store: ${DB_PATH}`);
 console.log(`Jev suggested replies: ${JEV_ENABLED ? "ON" : "OFF"}`);
+console.log(
+  LEARN_ADMIN_IDS.size
+    ? `Learn /learn allowlist: ${LEARN_ADMIN_IDS.size} id(s)`
+    : "Learn /learn: open to any private user (LEARN_ADMIN_IDS unset)",
+);
 
 bot.start({
   onStart: async (info) => {

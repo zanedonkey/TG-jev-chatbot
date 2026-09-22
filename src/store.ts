@@ -1,6 +1,6 @@
 /**
  * Persistent userId ↔ forum threadId mapping (SQLite via better-sqlite3).
- * Also stores short-lived Jev suggestion payloads for inline-keyboard callbacks.
+ * Also stores short-lived Jev suggestion payloads and learn-from-chats candidates.
  */
 import Database from "better-sqlite3";
 import fs from "node:fs";
@@ -12,6 +12,7 @@ export interface UserMapping {
   threadId: number;
   displayName: string;
   createdAt: string;
+  lastQuestion: string | null;
 }
 
 export interface JevSuggestionRow {
@@ -19,6 +20,19 @@ export interface JevSuggestionRow {
   userId: number;
   threadId: number;
   answer: string;
+  createdAt: string;
+}
+
+export type LearnSource = "staff" | "jev";
+export type LearnStatus = "pending" | "approved" | "rejected";
+
+export interface LearnCandidateRow {
+  id: string;
+  userId: number;
+  question: string;
+  answer: string;
+  source: LearnSource;
+  status: LearnStatus;
   createdAt: string;
 }
 
@@ -47,14 +61,40 @@ export class MappingStore {
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_jev_suggestions_user ON jev_suggestions(user_id);
+
+      CREATE TABLE IF NOT EXISTS learn_candidates (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_learn_status_created
+        ON learn_candidates(status, created_at DESC);
     `);
+    this.migrateMappingsLastQuestion();
+  }
+
+  /** Add last_question column if missing (existing DBs). */
+  private migrateMappingsLastQuestion(): void {
+    const cols = this.db
+      .prepare(`PRAGMA table_info(mappings)`)
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "last_question")) {
+      this.db.exec(
+        `ALTER TABLE mappings ADD COLUMN last_question TEXT DEFAULT NULL`,
+      );
+    }
   }
 
   getByUserId(userId: number): UserMapping | undefined {
     const row = this.db
       .prepare(
         `SELECT user_id AS userId, thread_id AS threadId,
-                display_name AS displayName, created_at AS createdAt
+                display_name AS displayName, created_at AS createdAt,
+                last_question AS lastQuestion
          FROM mappings WHERE user_id = ?`,
       )
       .get(userId) as UserMapping | undefined;
@@ -65,7 +105,8 @@ export class MappingStore {
     const row = this.db
       .prepare(
         `SELECT user_id AS userId, thread_id AS threadId,
-                display_name AS displayName, created_at AS createdAt
+                display_name AS displayName, created_at AS createdAt,
+                last_question AS lastQuestion
          FROM mappings WHERE thread_id = ?`,
       )
       .get(threadId) as UserMapping | undefined;
@@ -82,6 +123,19 @@ export class MappingStore {
            display_name = excluded.display_name`,
       )
       .run(userId, threadId, displayName);
+  }
+
+  setLastQuestion(userId: number, question: string): void {
+    this.db
+      .prepare(`UPDATE mappings SET last_question = ? WHERE user_id = ?`)
+      .run(question, userId);
+  }
+
+  getLastQuestion(userId: number): string | null {
+    const row = this.db
+      .prepare(`SELECT last_question AS lastQuestion FROM mappings WHERE user_id = ?`)
+      .get(userId) as { lastQuestion: string | null } | undefined;
+    return row?.lastQuestion ?? null;
   }
 
   deleteByUserId(userId: number): void {
@@ -117,6 +171,85 @@ export class MappingStore {
 
   deleteJevSuggestion(id: string): void {
     this.db.prepare(`DELETE FROM jev_suggestions WHERE id = ?`).run(id);
+  }
+
+  /**
+   * Insert a pending learn candidate if length/dedupe checks pass.
+   * Returns id, or null if skipped (too short / duplicate recently).
+   */
+  tryInsertLearnCandidate(
+    userId: number,
+    question: string,
+    answer: string,
+    source: LearnSource,
+  ): string | null {
+    const q = question.trim();
+    const a = answer.trim();
+    if (q.length < 2 || a.length < 4) return null;
+
+    // Loose dedupe: identical Q+A already pending or approved recently (7 days)
+    const dup = this.db
+      .prepare(
+        `SELECT id FROM learn_candidates
+         WHERE question = ? AND answer = ?
+           AND status IN ('pending', 'approved')
+           AND created_at >= datetime('now', '-7 days')
+         LIMIT 1`,
+      )
+      .get(q, a) as { id: string } | undefined;
+    if (dup) return null;
+
+    const id = randomBytes(8).toString("hex");
+    this.db
+      .prepare(
+        `INSERT INTO learn_candidates (id, user_id, question, answer, source, status)
+         VALUES (?, ?, ?, ?, ?, 'pending')`,
+      )
+      .run(id, userId, q, a, source);
+    return id;
+  }
+
+  countPendingLearn(): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM learn_candidates WHERE status = 'pending'`,
+      )
+      .get() as { n: number };
+    return row.n;
+  }
+
+  listPendingLearn(limit = 5): LearnCandidateRow[] {
+    return this.db
+      .prepare(
+        `SELECT id, user_id AS userId, question, answer, source,
+                status, created_at AS createdAt
+         FROM learn_candidates
+         WHERE status = 'pending'
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(limit) as LearnCandidateRow[];
+  }
+
+  getLearnCandidate(id: string): LearnCandidateRow | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, user_id AS userId, question, answer, source,
+                status, created_at AS createdAt
+         FROM learn_candidates WHERE id = ?`,
+      )
+      .get(id) as LearnCandidateRow | undefined;
+    return row;
+  }
+
+  setLearnStatus(id: string, status: LearnStatus): void {
+    this.db
+      .prepare(`UPDATE learn_candidates SET status = ? WHERE id = ?`)
+      .run(status, id);
+  }
+
+  deleteLearnCandidate(id: string): void {
+    this.db.prepare(`DELETE FROM learn_candidates WHERE id = ?`).run(id);
   }
 
   close(): void {
