@@ -4,6 +4,39 @@ Two-way Telegram **support relay** using **forum topics** in a supergroup, plus 
 
 用户私聊 Bot → 自动在论坛超级群里开一个专属话题；**Jev 先查固定话术，再查店铺知识库**，把建议回复发到**客服话题**供人工确认；工作人员点「发送给客户」或自己打字回复 → Bot 把内容送回用户私聊。
 
+---
+
+## 🚀 从零开始安装（推荐先看）
+
+**不会写代码也能装。** 完整中文点击清单（BotFather → 超级群 Topics → `.env` → `/groupid` → 重启 → 测消息）：
+
+👉 **[docs/SETUP.zh.md](./docs/SETUP.zh.md)**
+
+摘要（5 步）：
+
+1. [@BotFather](https://t.me/BotFather) 创建机器人，复制 Token → `.env` 的 `BOT_TOKEN`
+2. 新建**超级群**，开启 **Topics**，把 Bot 加成管理员（**管理话题** + **发消息**）
+3. 先只填 `BOT_TOKEN`，`FORUM_GROUP_ID` **可留空**；`npm i` + `npm run dev`
+4. 在群里发 `/groupid`，把回覆的数字写入 `FORUM_GROUP_ID=`，**重启** Bot
+5. 私聊 Bot 测一条；再按需改 `data/scripts.json` / `data/knowledge.md`
+
+配置中也可私聊 Bot 发 **`/setup`** 查看还差哪一步；**`/help`** 看命令。
+
+### 常见问题（速查）
+
+| 问题 | 处理 |
+|------|------|
+| 群类型不对 / Topics 没开 | 必须用**超级群**并打开 Topics |
+| Bot 不是管理员 | 至少勾选「管理话题」「发消息」 |
+| 客服回复用户收不到 | Bot 需为群管理员才能看到话题内消息（隐私模式） |
+| id 写成正数或自己的 user id | 超级群 id 几乎都是 **负数** `-100…` |
+| 改了 `.env` 没变化 | **必须重启**进程 |
+| Token 泄露 | BotFather `/revoke` 换新；勿提交 `.env` |
+
+环境变量注释说明见 [`.env.example`](./.env.example)。
+
+---
+
 ## Architecture
 
 ```
@@ -74,8 +107,10 @@ Disable with `JEV_ENABLED=0`.
 - ✅ SQLite persistence (`better-sqlite3`) — mappings survive restarts
 - ✅ `copyMessage` preserves text / photos / documents / stickers / etc.
 - ✅ **Jev assist live**: scripts → knowledge → topic suggestion → staff send
-- ✅ Bilingual `/start` (中文 + English)
-- ✅ `/whoami` in private (debug user id); `/groupid` inside the group (debug chat id)
+- ✅ Chinese-first onboarding: [`docs/SETUP.zh.md`](./docs/SETUP.zh.md), `/setup`, `/help`
+- ✅ **SETUP_MODE**: leave `FORUM_GROUP_ID` empty to run guided setup (`/groupid` still works)
+- ✅ Bilingual `/start` (中文 + English); admin tip for `/setup`
+- ✅ `/whoami` in private; `/groupid` inside the group (copy-paste `.env` line)
 - ✅ Loop-safe: bot’s own messages are never relayed
 - ✅ Auto-recreate topic if Telegram reports the thread was deleted
 
@@ -105,9 +140,9 @@ Supergroup ids are **negative** and usually look like `-100xxxxxxxxxx`.
 **Reliable method (recommended):**
 
 1. Add the bot to the group as admin.
-2. Start the bot with a temporary/placeholder `FORUM_GROUP_ID` **or** put the real id once you have it.
+2. Start with `FORUM_GROUP_ID` **empty** (SETUP_MODE) or already filled.
 3. In the group, send: `/groupid`
-4. The bot replies with `This chat id: -100…` — copy that into `.env` as `FORUM_GROUP_ID`.
+4. Bot replies with a ready-to-paste line `FORUM_GROUP_ID=-100…` — put it in `.env` and **restart**.
 
 **Alternatives:**
 
@@ -115,51 +150,24 @@ Supergroup ids are **negative** and usually look like `-100xxxxxxxxxx`.
 - Call `getUpdates` after posting in the group:  
   `https://api.telegram.org/bot<BOT_TOKEN>/getUpdates` and look for `"chat":{"id":-100…}`.
 
-## Quick start
+## Quick start (English)
 
-### 1. Create the bot (BotFather)
-
-1. Open [@BotFather](https://t.me/BotFather) → `/newbot`
-2. Copy the **HTTP API token** → `BOT_TOKEN`
-
-### 2. Create a forum-enabled supergroup
-
-1. Create a **Supergroup** (not a basic group).
-2. Group settings → **Topics** → enable.
-3. Add your bot as **administrator** with **Manage topics** + **Post messages**.
-4. Obtain `FORUM_GROUP_ID` (see above).
-
-### 3. Configure env
+Same flow as the Chinese guide; full click-path: [docs/SETUP.zh.md](./docs/SETUP.zh.md).
 
 ```bash
 git clone https://github.com/zanedonkey/TG-jev-chatbot.git
 cd TG-jev-chatbot
 cp .env.example .env
-```
-
-```env
-BOT_TOKEN=123456:ABC-DEF...
-FORUM_GROUP_ID=-1001234567890
-# Optional:
-# TOPIC_NAME_TEMPLATE={name} · {id}
-# DB_PATH=./data/mappings.sqlite
-# JEV_ENABLED=1
-# JEV_SCRIPTS_PATH=./data/scripts.json
-# JEV_KNOWLEDGE_PATH=./data/knowledge.md
-```
-
-### 4. Install & run
-
-```bash
+# Edit .env: set BOT_TOKEN; FORUM_GROUP_ID may stay empty at first
 npm install
-npm run dev          # development (tsx)
-# production:
-npm run build && npm start
+npm run dev
+# In the forum group: /groupid → paste into .env → restart
+# Production: npm run build && npm start
 ```
 
-You should see: `Bot @your_bot … running. Forum group: -100…` and `Jev suggested replies: ON`.
+You should see: `Bot @your_bot … running. Forum group: -100…` (or `SETUP MODE` if group id empty) and `Jev suggested replies: ON`.
 
-### 5. Staff workflow
+### Staff workflow
 
 1. User messages the bot in private → a new topic appears in the group.
 2. If the text matches scripts/knowledge, a **💡 Jev 建议回复** appears with **发送给客户**.
@@ -171,12 +179,22 @@ You should see: `Bot @your_bot … running. Forum group: -100…` and `Jev sugge
 | Variable               | Required | Description |
 |------------------------|----------|-------------|
 | `BOT_TOKEN`            | Yes      | BotFather token |
-| `FORUM_GROUP_ID`       | Yes      | Forum supergroup id (e.g. `-100…`) |
+| `FORUM_GROUP_ID`       | Yes\*    | Forum supergroup id (e.g. `-100…`). \*Can start empty for SETUP_MODE |
 | `TOPIC_NAME_TEMPLATE`  | No       | Default `{name} · {id}`. Also `{username}` |
 | `DB_PATH`              | No       | SQLite file path (default `./data/mappings.sqlite`) |
 | `JEV_ENABLED`          | No       | Default on. Set `0` / `false` to disable suggestions |
 | `JEV_SCRIPTS_PATH`     | No       | Default `./data/scripts.json` |
 | `JEV_KNOWLEDGE_PATH`   | No       | Default `./data/knowledge.md` |
+
+## Bot commands
+
+| Command | Where | Who |
+|---------|-------|-----|
+| `/start` | Private | End users (greeting); in SETUP_MODE shows admin setup guide |
+| `/setup` | Private | Operators — remaining config checklist |
+| `/help` | Private / group | Command list |
+| `/groupid` | Forum group | Operators — print `FORUM_GROUP_ID=…` line |
+| `/whoami` | Private | Debug user / chat ids |
 
 ## Scripts
 
@@ -208,7 +226,7 @@ Committed sample content: `data/scripts.json`, `data/knowledge.md`. Runtime DB f
 - **Deleted topics:** bot tries to recreate on the next user message.
 - **Blocked users:** staff → user delivery fails if the user blocked the bot; an error note is posted in the topic.
 - **Single forum group:** one `FORUM_GROUP_ID` per process.
-- **Commands** in private (except `/start`, `/whoami`) are not relayed as content.
+- **Commands** in private (except handled ones like `/start`, `/setup`, `/help`, `/whoami`) are not relayed as content.
 
 ## Suggested GitHub topics
 

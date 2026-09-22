@@ -118,6 +118,59 @@ function sourceLabel(source: "script" | "knowledge" | "none"): string {
   return "未匹配";
 }
 
+/** Operator checklist — Chinese-first; used by /setup and SETUP_MODE DMs */
+function setupChecklistText(): string {
+  if (SETUP_MODE) {
+    return [
+      "🛠️ 管理员配置清单（SETUP_MODE）",
+      "",
+      "✅ 步骤 1：BOT_TOKEN 已生效（你能看到这条消息，说明 Token 正确、Bot 已启动）",
+      "⬜ 步骤 2：确认已新建「超级群」并开启 Topics（论坛话题）",
+      "⬜ 步骤 3：把 Bot 加成管理员（至少：管理话题 + 发消息）",
+      "⬜ 步骤 4：在超级群里发送 /groupid，复制回覆的负数 id",
+      "⬜ 步骤 5：写入 .env：",
+      "     FORUM_GROUP_ID=-100……",
+      "⬜ 步骤 6：保存后重启 Bot（Ctrl+C，再 npm run dev / npm start）",
+      "",
+      "当前卡在：还缺 FORUM_GROUP_ID。",
+      "拿群 id → 群里发 /groupid；完整图文步骤见仓库 docs/SETUP.zh.md。",
+      "",
+      "English: Token OK; set FORUM_GROUP_ID from /groupid in the forum supergroup, then restart.",
+    ].join("\n");
+  }
+
+  return [
+    "✅ 配置已完成",
+    "",
+    `• BOT_TOKEN：已设置`,
+    `• FORUM_GROUP_ID：已设置（${FORUM_GROUP_ID}）`,
+    `• Jev 建议回复：${JEV_ENABLED ? "开启" : "关闭"}`,
+    "",
+    "运维小提示：",
+    "• 编辑 data/scripts.json（固定话术）、data/knowledge.md（知识库）后重启 Bot",
+    "• 客服在用户话题里回复，或点 Jev「发送给客户」",
+    "• 群内发 /groupid 可核对群 id；私聊 /whoami 看自己的 user id",
+    "• 新手图文：docs/SETUP.zh.md",
+    "",
+    "English: Fully configured. Edit scripts/knowledge, restart after changes.",
+  ].join("\n");
+}
+
+function setupModeDmHint(): string {
+  return [
+    "⚙️ Bot 还在配置中（SETUP_MODE）：尚未设置超级群 FORUM_GROUP_ID，暂时不能转达客服消息。",
+    "",
+    "管理员请按下面做：",
+    "1. 确认超级群已开 Topics，且 Bot 是管理员（管理话题 + 发消息）",
+    "2. 在超级群里发送 /groupid，复制回覆的数字",
+    "3. 写入 .env 的 FORUM_GROUP_ID=（一般为 -100…），保存后重启 Bot",
+    "",
+    "私聊发送 /setup 可查看完整清单；/help 查看命令。",
+    "",
+    "English: FORUM_GROUP_ID missing — send /groupid in the forum group, paste into .env, restart. /setup for checklist.",
+  ].join("\n");
+}
+
 async function postJevSuggestion(
   userId: number,
   threadId: number,
@@ -172,9 +225,26 @@ async function ensureTopic(ctx: Context): Promise<number> {
   return topic.message_thread_id;
 }
 
-/** /start — bilingual help for end users (private only) */
+/** /start — setup guide for operators in SETUP_MODE; bilingual greeting otherwise */
 bot.command("start", async (ctx) => {
   if (!isPrivateChat(ctx)) return;
+
+  if (SETUP_MODE) {
+    await ctx.reply(
+      [
+        "👋 管理员配置引导",
+        "",
+        "Bot 已启动，但还在 SETUP_MODE（未设置 FORUM_GROUP_ID）。",
+        "终端用户暂时无法把消息转到客服群。",
+        "",
+        setupChecklistText(),
+        "",
+        "也可以随时发 /setup 再看一遍清单，或 /help 看命令说明。",
+      ].join("\n"),
+    );
+    return;
+  }
+
   await ctx.reply(
     [
       "👋 你好！直接发消息给我，系统会为你创建专属客服话题，工作人员会在话题里回复。",
@@ -183,6 +253,55 @@ bot.command("start", async (ctx) => {
       "",
       "支持文字 / 图片 / 文件 / 贴纸等。",
       "Text, photos, documents, stickers, and more are supported.",
+      "",
+      "管理员可发 /setup 查看配置清单。",
+    ].join("\n"),
+  );
+});
+
+/** /setup — printable remaining-steps checklist (private) */
+bot.command("setup", async (ctx) => {
+  if (!isPrivateChat(ctx)) {
+    await ctx.reply("请私聊 Bot 发送 /setup。 / Use /setup in a private chat with the bot.");
+    return;
+  }
+  await ctx.reply(setupChecklistText());
+});
+
+/** /help — commands for operators vs end users */
+bot.command("help", async (ctx) => {
+  if (!isPrivateChat(ctx)) {
+    await ctx.reply(
+      [
+        "群内可用：/groupid — 显示本群 chat id，用于填写 FORUM_GROUP_ID",
+        "",
+        "In groups: /groupid — print this chat id for FORUM_GROUP_ID",
+      ].join("\n"),
+    );
+    return;
+  }
+
+  await ctx.reply(
+    [
+      "📖 命令说明",
+      "",
+      "【终端用户】",
+      "/start — 欢迎语 / 开始使用",
+      "直接发文字、图片、文件等 → 转到客服话题",
+      "",
+      "【管理员 / 运维】",
+      "/setup — 配置清单（SETUP_MODE 时显示还差哪步）",
+      "/groupid — 在超级群里发送，获取 FORUM_GROUP_ID",
+      "/whoami — 查看自己的 user id / chat id",
+      "/help — 本说明",
+      "",
+      SETUP_MODE
+        ? "当前状态：SETUP_MODE（FORUM_GROUP_ID 未设置）→ 请完成 /setup 清单。"
+        : "当前状态：已配置完成，可正常转达。",
+      "",
+      "图文安装：仓库 docs/SETUP.zh.md",
+      "",
+      "English: /setup checklist · /groupid in forum group · /whoami debug ids.",
     ].join("\n"),
   );
 });
@@ -192,10 +311,15 @@ bot.command("whoami", async (ctx) => {
   if (!isPrivateChat(ctx)) return;
   await ctx.reply(
     [
-      `Your user id: \`${ctx.from?.id}\``,
-      `Your chat id: \`${ctx.chat?.id}\``,
+      `你的 user id：\`${ctx.from?.id}\``,
+      `你的 chat id：\`${ctx.chat?.id}\``,
       "",
-      `Forum group (configured): \`${FORUM_GROUP_ID}\``,
+      SETUP_MODE
+        ? "论坛群（FORUM_GROUP_ID）：尚未设置（SETUP_MODE）"
+        : `论坛群（已配置）：\`${FORUM_GROUP_ID}\``,
+      "",
+      `Your user id: \`${ctx.from?.id}\``,
+      `Forum group: ${SETUP_MODE ? "(not set)" : `\`${FORUM_GROUP_ID}\``}`,
     ].join("\n"),
     { parse_mode: "Markdown" },
   );
@@ -207,12 +331,32 @@ bot.command("whoami", async (ctx) => {
  */
 bot.command("groupid", async (ctx) => {
   if (!ctx.chat || ctx.chat.type === "private") {
-    await ctx.reply("Use this command inside the forum supergroup.");
+    await ctx.reply(
+      [
+        "请在「论坛超级群」里发送 /groupid（不要私聊发）。",
+        "",
+        "拿到数字后：把下面格式写入 .env，保存并重启 Bot。",
+        "FORUM_GROUP_ID=-100……",
+        "",
+        "English: Send /groupid inside the forum supergroup, not in private chat.",
+      ].join("\n"),
+    );
     return;
   }
+
+  const id = ctx.chat.id;
   await ctx.reply(
-    `This chat id: \`${ctx.chat.id}\`\nSet FORUM_GROUP_ID=${ctx.chat.id}`,
-    { parse_mode: "Markdown" },
+    [
+      "✅ 已获取本群 chat id",
+      "",
+      "把下面这一行复制到 .env：",
+      `FORUM_GROUP_ID=${id}`,
+      "",
+      "改完后重启 Bot（Ctrl+C，再 npm run dev / npm start）。",
+      "超级群 id 一般是负数，形如 -100……",
+      "",
+      "English: Paste that line into .env, then restart the bot.",
+    ].join("\n"),
   );
 });
 
@@ -257,7 +401,7 @@ bot.on("message", async (ctx) => {
   if (botId !== undefined && ctx.from.id === botId) return;
   if (ctx.from.is_bot) return;
 
-  // Skip commands already handled (start/whoami/groupid) — other slash cmds ignore
+  // Skip commands already handled — other slash cmds ignore
   if (msg.text?.startsWith("/")) return;
 
   if (isServiceMessage(msg)) return;
@@ -297,9 +441,7 @@ bot.on("message", async (ctx) => {
   if (!isPrivateChat(ctx)) return;
 
   if (SETUP_MODE) {
-    await ctx.reply(
-      "⚙️ Bot 还在配置中：管理员尚未设置超级群 FORUM_GROUP_ID。\nSettings incomplete: FORUM_GROUP_ID not set yet.",
-    );
+    await ctx.reply(setupModeDmHint());
     return;
   }
 
