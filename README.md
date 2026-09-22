@@ -1,6 +1,6 @@
-# tg-relay-bot
+# TG-jev-chatbot
 
-Two-way Telegram **support relay** using **forum topics** in a supergroup.
+Two-way Telegram **support relay** using **forum topics** in a supergroup. Jev-ready: future triage / routing can plug in without changing the forum-topic core.
 
 用户私聊 Bot → 自动在论坛超级群里开一个专属话题；工作人员在话题里回复 → Bot 把内容送回用户私聊。适合客服 / 值班 / 多座席协作。
 
@@ -90,8 +90,8 @@ Supergroup ids are **negative** and usually look like `-100xxxxxxxxxx`.
 ### 3. Configure env
 
 ```bash
-git clone https://github.com/zanedonkey/tg-relay-bot.git
-cd tg-relay-bot
+git clone https://github.com/zanedonkey/TG-jev-chatbot.git
+cd TG-jev-chatbot
 cp .env.example .env
 ```
 
@@ -161,7 +161,7 @@ data/mappings.sqlite
 
 ## Suggested GitHub topics
 
-`telegram` · `bot` · `typescript` · `relay` · `forum` · `grammy` · `sqlite`
+`telegram` · `bot` · `typescript` · `relay` · `jev` · `forum` · `grammy` · `sqlite`
 
 ## License
 

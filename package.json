@@ -1,5 +1,5 @@
 {
-  "name": "tg-relay-bot",
+  "name": "tg-jev-chatbot",
   "version": "1.0.0",
   "description": "Two-way Telegram relay bot using forum topics in a supergroup (grammY + SQLite).",
   "type": "module",

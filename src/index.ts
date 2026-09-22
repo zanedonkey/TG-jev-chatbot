@@ -1,5 +1,5 @@
 /**
- * tg-relay-bot — Telegram two-way relay via forum topics
+ * TG-jev-chatbot — Telegram two-way relay via forum topics
  *
  * Flow:
  * 1. User DMs the bot privately.
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { MappingStore } from "./store.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const FORUM_GROUP_ID_RAW = process.env.FORUM_GROUP_ID;
+const FORUM_GROUP_ID_RAW = process.env.FORUM_GROUP_ID?.trim() || "";
 const TOPIC_NAME_TEMPLATE =
   process.env.TOPIC_NAME_TEMPLATE ?? "{name} · {id}";
 const DB_PATH =
@@ -30,17 +30,17 @@ if (!BOT_TOKEN) {
   console.error("Missing BOT_TOKEN. Copy .env.example → .env and fill it in.");
   process.exit(1);
 }
-if (!FORUM_GROUP_ID_RAW) {
-  console.error(
-    "Missing FORUM_GROUP_ID. Use a forum-enabled supergroup id (usually -100...).",
-  );
-  process.exit(1);
-}
 
-const FORUM_GROUP_ID = Number(FORUM_GROUP_ID_RAW);
-if (!Number.isFinite(FORUM_GROUP_ID)) {
+const SETUP_MODE = !FORUM_GROUP_ID_RAW;
+const FORUM_GROUP_ID = SETUP_MODE ? 0 : Number(FORUM_GROUP_ID_RAW);
+if (!SETUP_MODE && !Number.isFinite(FORUM_GROUP_ID)) {
   console.error("FORUM_GROUP_ID must be a number (e.g. -1001234567890).");
   process.exit(1);
+}
+if (SETUP_MODE) {
+  console.warn(
+    "SETUP MODE: FORUM_GROUP_ID is empty. /groupid works; relay is paused until you set it.",
+  );
 }
 
 const bot = new Bot(BOT_TOKEN);
@@ -70,7 +70,7 @@ function isPrivateChat(ctx: Context): boolean {
 }
 
 function isForumGroup(ctx: Context): boolean {
-  return ctx.chat?.id === FORUM_GROUP_ID;
+  return !SETUP_MODE && ctx.chat?.id === FORUM_GROUP_ID;
 }
 
 /** Service / system messages that should never be relayed */
@@ -217,6 +217,13 @@ bot.on("message", async (ctx) => {
   // ─── User → Staff: private DM ───────────────────────────────────────
   if (!isPrivateChat(ctx)) return;
 
+  if (SETUP_MODE) {
+    await ctx.reply(
+      "⚙️ Bot 还在配置中：管理员尚未设置超级群 FORUM_GROUP_ID。\nSettings incomplete: FORUM_GROUP_ID not set yet.",
+    );
+    return;
+  }
+
   try {
     let threadId: number;
     try {
@@ -258,14 +265,16 @@ bot.catch((err) => {
   console.error("Bot error:", err);
 });
 
-console.log("tg-relay-bot starting…");
+console.log("TG-jev-chatbot starting…");
 console.log(`SQLite store: ${DB_PATH}`);
 
 bot.start({
   onStart: async (info) => {
     botId = info.id;
     console.log(
-      `Bot @${info.username} (id=${info.id}) running. Forum group: ${FORUM_GROUP_ID}`,
+      SETUP_MODE
+        ? `Bot @${info.username} (id=${info.id}) running in SETUP MODE (no FORUM_GROUP_ID yet).`
+        : `Bot @${info.username} (id=${info.id}) running. Forum group: ${FORUM_GROUP_ID}`,
     );
   },
 });
