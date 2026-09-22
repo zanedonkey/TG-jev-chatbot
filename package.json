@@ -1,0 +1,33 @@
+{
+  "name": "tg-relay-bot",
+  "version": "1.0.0",
+  "description": "Two-way Telegram relay bot — users message the bot, you reply through it.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "relay",
+    "typescript",
+    "grammy"
+  ],
+  "author": "zanedonkey",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "grammy": "^1.35.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
