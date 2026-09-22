@@ -1,7 +1,7 @@
 {
   "name": "tg-jev-chatbot",
   "version": "1.0.0",
-  "description": "Two-way Telegram relay bot using forum topics in a supergroup (grammY + SQLite).",
+  "description": "Two-way Telegram relay bot using forum topics + Jev suggested replies (grammY + SQLite).",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -17,7 +17,8 @@
     "topics",
     "typescript",
     "grammy",
-    "sqlite"
+    "sqlite",
+    "jev"
   ],
   "author": "zanedonkey",
   "license": "MIT",

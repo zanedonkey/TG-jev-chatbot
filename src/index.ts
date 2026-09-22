@@ -6,14 +6,17 @@
  * 2. On first content message, bot creates a forum topic in FORUM_GROUP_ID
  *    and stores userId ↔ threadId in SQLite.
  * 3. Subsequent user DMs are copied into that topic (message_thread_id).
- * 4. Staff replies inside the topic → bot copies the reply back to the user DM.
+ * 4. After a user text DM is relayed, Jev may post a staff-only suggested reply
+ *    (scripts → knowledge) with a "发送给客户" button — never auto-sent.
+ * 5. Staff replies inside the topic → bot copies the reply back to the user DM.
  */
 
 import "dotenv/config";
-import { Bot, Context } from "grammy";
+import { Bot, Context, InlineKeyboard } from "grammy";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MappingStore } from "./store.js";
+import { suggest } from "./jev.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const FORUM_GROUP_ID_RAW = process.env.FORUM_GROUP_ID?.trim() || "";
@@ -25,6 +28,14 @@ const DB_PATH =
 
 /** Telegram "General" forum topic thread id — ignore staff chatter there */
 const GENERAL_TOPIC_ID = 1;
+
+const JEV_ENABLED_RAW = (process.env.JEV_ENABLED ?? "").trim().toLowerCase();
+const JEV_ENABLED =
+  JEV_ENABLED_RAW === "" ||
+  JEV_ENABLED_RAW === "1" ||
+  JEV_ENABLED_RAW === "true" ||
+  JEV_ENABLED_RAW === "yes" ||
+  JEV_ENABLED_RAW === "on";
 
 if (!BOT_TOKEN) {
   console.error("Missing BOT_TOKEN. Copy .env.example → .env and fill it in.");
@@ -101,6 +112,41 @@ function isServiceMessage(msg: NonNullable<Context["message"]>): boolean {
   );
 }
 
+function sourceLabel(source: "script" | "knowledge" | "none"): string {
+  if (source === "script") return "固定话术";
+  if (source === "knowledge") return "店铺知识库";
+  return "未匹配";
+}
+
+async function postJevSuggestion(
+  userId: number,
+  threadId: number,
+  userText: string,
+): Promise<void> {
+  if (!JEV_ENABLED) return;
+  const result = suggest(userText);
+  if (!result || result.source === "none" || !result.answer.trim()) return;
+
+  const suggestionId = store.saveJevSuggestion(userId, threadId, result.answer);
+  const header = `💡 Jev 建议回复（来源：${sourceLabel(result.source)}）`;
+  const body = `${header}\n\n${result.answer}`;
+  // Plain text — avoid parse_mode breakage from KB/script content
+  const keyboard = new InlineKeyboard().text(
+    "发送给客户",
+    `jev:${suggestionId}`,
+  );
+
+  try {
+    await bot.api.sendMessage(FORUM_GROUP_ID, body, {
+      message_thread_id: threadId,
+      reply_markup: keyboard,
+    });
+  } catch (err) {
+    console.error("Failed to post Jev suggestion:", err);
+    store.deleteJevSuggestion(suggestionId);
+  }
+}
+
 async function ensureTopic(ctx: Context): Promise<number> {
   const userId = ctx.from!.id;
   const existing = store.getByUserId(userId);
@@ -170,11 +216,44 @@ bot.command("groupid", async (ctx) => {
   );
 });
 
+/** Staff clicks 「发送给客户」 on a Jev suggestion */
+bot.on("callback_query:data", async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  if (!data.startsWith("jev:")) return;
+
+  const suggestionId = data.slice("jev:".length);
+  const row = store.getJevSuggestion(suggestionId);
+  if (!row) {
+    await ctx.answerCallbackQuery({
+      text: "建议已过期或不存在",
+      show_alert: false,
+    });
+    return;
+  }
+
+  try {
+    await ctx.api.sendMessage(row.userId, row.answer);
+    store.deleteJevSuggestion(suggestionId);
+    await ctx.answerCallbackQuery({ text: "已发送给客户 ✅" });
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } });
+    } catch {
+      /* ignore — message may be too old to edit */
+    }
+  } catch (err) {
+    console.error("Failed to send Jev suggestion to user:", err);
+    await ctx.answerCallbackQuery({
+      text: "发送失败，用户可能已屏蔽 Bot",
+      show_alert: true,
+    });
+  }
+});
+
 bot.on("message", async (ctx) => {
   const msg = ctx.message;
   if (!msg || !ctx.chat || !ctx.from) return;
 
-  // Never relay the bot's own messages (loop prevention)
+  // Never relay the bot's own messages (loop prevention) — includes Jev suggestions
   if (botId !== undefined && ctx.from.id === botId) return;
   if (ctx.from.is_bot) return;
 
@@ -255,6 +334,11 @@ bot.on("message", async (ctx) => {
         throw copyErr;
       }
     }
+
+    // Jev: text-only suggestions after successful relay (staff topic only)
+    if (typeof msg.text === "string" && msg.text.trim()) {
+      await postJevSuggestion(ctx.from.id, threadId, msg.text);
+    }
   } catch (err) {
     console.error("Failed to relay user message to forum topic:", err);
     await ctx.reply("❌ 转达失败，请稍后再试。 / Relay failed, try again later.");
@@ -267,6 +351,7 @@ bot.catch((err) => {
 
 console.log("TG-jev-chatbot starting…");
 console.log(`SQLite store: ${DB_PATH}`);
+console.log(`Jev suggested replies: ${JEV_ENABLED ? "ON" : "OFF"}`);
 
 bot.start({
   onStart: async (info) => {

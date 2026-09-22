@@ -11,9 +11,11 @@ build/
 .env.local
 .env.*.local
 
-# Runtime data (user ↔ topic mappings)
+# Runtime data (user ↔ topic mappings) — keep sample Jev content
 data/*
 !data/.gitkeep
+!data/scripts.json
+!data/knowledge.md
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
