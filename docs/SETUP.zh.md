@@ -99,7 +99,15 @@ npm run dev
 4. 按需编辑：
    - [`data/scripts.json`](../data/scripts.json) — 固定话术（关键词 → 答案）
    - [`data/knowledge.md`](../data/knowledge.md) — 店铺知识（`## 标题` 分段）
-5. 改完内容后**重启 Bot**（或之后用代码里的热重载），再测
+5. 改完内容后**重启 Bot**（手动改文件建议重启；用 `/learn` 入库会热重载），再测
+
+### 6. 自定义话术（Bot 已跑起来之后）
+
+装好并能收发消息后，下一步就是把话术改成**你家店铺**的说法：
+
+👉 **[SCRIPTS.zh.md](./SCRIPTS.zh.md)** — 固定话术 vs 知识库、怎么安全改 JSON、怎么用 `/learn`、迷你 FAQ
+
+也可私聊 Bot 发 **`/scripts`**，看一版精简清单（完整图文仍以该文档为准）。
 
 ---
 
@@ -136,6 +144,6 @@ npm run dev
 
 - **用户**：私聊 Bot 发文字/图片/文件即可
 - **客服**：在对应话题里打字回复，或点 Jev 的「发送①/②/③」（最多三条可选；都不合适就直接打字）
-- **管理员**：私聊 `/setup` 看配置状态；`/help` 看命令；`/whoami` 看自己的 user id；`/learn` 审核学习问答入库
+- **管理员**：私聊 `/setup` 看配置状态；`/help` 看命令；`/whoami` 看自己的 user id；`/learn` 审核学习问答入库；`/scripts` 话术与知识库新手清单
 
-更完整的架构、环境变量表、Jev 匹配规则 → [README.md](../README.md)。
+话术引导全文 → [SCRIPTS.zh.md](./SCRIPTS.zh.md)。更完整的架构、环境变量表、Jev 匹配规则 → [README.md](../README.md)。

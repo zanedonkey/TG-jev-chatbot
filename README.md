@@ -12,6 +12,8 @@ Two-way Telegram **support relay** using **forum topics** in a supergroup, plus 
 
 👉 **[docs/SETUP.zh.md](./docs/SETUP.zh.md)**
 
+话术 / 知识库怎么改（老板友好）：👉 **[docs/SCRIPTS.zh.md](./docs/SCRIPTS.zh.md)** · 私聊 Bot 也可发 `/scripts`
+
 摘要（5 步）：
 
 1. [@BotFather](https://t.me/BotFather) 创建机器人，复制 Token → `.env` 的 `BOT_TOKEN`
@@ -98,7 +100,9 @@ Goal: help merchants answer **fast** with reusable copy — **not** urgency/spam
 | [`data/scripts.json`](./data/scripts.json) | Array of `{ id, keywords: string[], question?, answer }` |
 | [`data/knowledge.md`](./data/knowledge.md) | Sections starting with `## 标题` |
 
-Restart the bot (or call `reloadJevData()` in code) after editing files so changes load.
+**新手中文教程（复制示例、JSON 逗号坑、`/learn`）：** [`docs/SCRIPTS.zh.md`](./docs/SCRIPTS.zh.md)。私聊 Bot 发 `/scripts` 看精简清单。
+
+Restart the bot after **manual** file edits so changes load. Approving via `/learn` calls `reloadJevData()` (hot reload) when possible.
 
 Sample Chinese copy covers 营业时间、运费/配送、退换货、付款方式、怎么下单, plus 店铺简介 / 热门商品 / 售后政策摘要.
 
@@ -125,7 +129,7 @@ Goal: the bot gets smarter over time from **real** customer ↔ staff Q&A — **
 - ✅ `copyMessage` preserves text / photos / documents / stickers / etc.
 - ✅ **Jev assist live**: scripts → knowledge → up to 3 topic options → staff send
 - ✅ **Learn-from-chats v1**: capture Q&A → `/learn` review → scripts / knowledge (no LLM yet)
-- ✅ Chinese-first onboarding: [`docs/SETUP.zh.md`](./docs/SETUP.zh.md), `/setup`, `/help`
+- ✅ Chinese-first onboarding: [`docs/SETUP.zh.md`](./docs/SETUP.zh.md), [`docs/SCRIPTS.zh.md`](./docs/SCRIPTS.zh.md), `/setup`, `/scripts`, `/help`
 - ✅ **SETUP_MODE**: leave `FORUM_GROUP_ID` empty to run guided setup (`/groupid` still works)
 - ✅ Bilingual `/start` (中文 + English); admin tip for `/setup`
 - ✅ `/whoami` in private; `/groupid` inside the group (copy-paste `.env` line)
@@ -214,6 +218,7 @@ You should see: `Bot @your_bot … running. Forum group: -100…` (or `SETUP MOD
 | `/groupid` | Forum group | Operators — print `FORUM_GROUP_ID=…` line |
 | `/whoami` | Private | Debug user / chat ids |
 | `/learn` | Private | Review pending Q&A → write scripts/knowledge (optional `LEARN_ADMIN_IDS`) |
+| `/scripts` | Private | Short Chinese checklist for editing 话术 / 知识库 (full doc: `docs/SCRIPTS.zh.md`) |
 
 ## Scripts
 
@@ -247,7 +252,7 @@ Committed sample content: `data/scripts.json`, `data/knowledge.md`. Runtime DB f
 - **Deleted topics:** bot tries to recreate on the next user message.
 - **Blocked users:** staff → user delivery fails if the user blocked the bot; an error note is posted in the topic.
 - **Single forum group:** one `FORUM_GROUP_ID` per process.
-- **Commands** in private (except handled ones like `/start`, `/setup`, `/help`, `/whoami`) are not relayed as content.
+- **Commands** in private (except handled ones like `/start`, `/setup`, `/help`, `/whoami`, `/learn`, `/scripts`) are not relayed as content.
 
 ## Suggested GitHub topics
 

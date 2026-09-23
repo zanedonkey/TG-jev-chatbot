@@ -196,8 +196,9 @@ function setupChecklistText(): string {
     "• 编辑 data/scripts.json（固定话术）、data/knowledge.md（知识库）后可重启，或用 /learn 入库后自动热重载",
     "• 客服在用户话题里回复，或点 Jev「发送①/②/③」（最多三条可选）→ 成功送达后会收集问答候选",
     "• 私聊 /learn 审核待入库问答（入库话术 / 入库知识 / 忽略）",
+    "• 私聊 /scripts 看话术与知识库新手清单（完整图文：docs/SCRIPTS.zh.md）",
     "• 群内发 /groupid 可核对群 id；私聊 /whoami 看自己的 user id",
-    "• 新手图文：docs/SETUP.zh.md",
+    "• 新手图文：docs/SETUP.zh.md（安装）、docs/SCRIPTS.zh.md（话术）",
     "",
     "English: Fully configured. Use /learn to review captured Q&A into scripts/knowledge.",
   ].join("\n");
@@ -217,6 +218,30 @@ function setupModeDmHint(): string {
     "English: FORUM_GROUP_ID missing — send /groupid in the forum group, paste into .env, restart. /setup for checklist.",
   ].join("\n");
 }
+
+/** Short 话术/知识库 checklist — private /scripts; full guide in docs/SCRIPTS.zh.md */
+function scriptsChecklistText(): string {
+  return [
+    "📝 话术与知识库 · 新手清单",
+    "",
+    "两样东西：",
+    "• data/scripts.json — 固定话术（关键词 → 标准答案，Jev 优先用）",
+    "• data/knowledge.md — 店铺知识库（## 标题 + 正文，话术不够时再补）",
+    "",
+    "客户发文字后，话题里最多 3 条建议；点「发送①/②/③」或自己打字。不会自动发给客户。",
+    "",
+    "怎么改：",
+    "① 手动：复制一条话术改 id/keywords/question/answer；知识库用 ## 分段",
+    "② 不写代码：客户问 → 客服/Jev 成功回复 → 私聊 /learn → 入库话术 / 入库知识 / 忽略",
+    "",
+    "改完：手动改文件建议重启 Bot；/learn 入库会热重载。",
+    "答案里不要写密码、卡号等隐私。",
+    "",
+    "完整图文见仓库 docs/SCRIPTS.zh.md",
+    "安装步骤见 docs/SETUP.zh.md · 命令见 /help",
+  ].join("\n");
+}
+
 
 const CIRCLE_NUMS = ["①", "②", "③"] as const;
 /** Telegram hard limit for message text */
@@ -334,7 +359,7 @@ bot.command("start", async (ctx) => {
       "支持文字 / 图片 / 文件 / 贴纸等。",
       "Text, photos, documents, stickers, and more are supported.",
       "",
-      "管理员可发 /setup 查看配置清单；/learn 审核学习问答。",
+      "管理员可发 /setup 查看配置清单；/learn 审核学习问答；/scripts 话术新手清单。",
     ].join("\n"),
   );
 });
@@ -346,6 +371,15 @@ bot.command("setup", async (ctx) => {
     return;
   }
   await ctx.reply(setupChecklistText());
+});
+
+/** /scripts — 话术/知识库新手清单（private; alias 话术教程） */
+bot.command("scripts", async (ctx) => {
+  if (!isPrivateChat(ctx)) {
+    await ctx.reply("请私聊 Bot 发送 /scripts。 / Use /scripts in a private chat.");
+    return;
+  }
+  await ctx.reply(scriptsChecklistText());
 });
 
 /** /help — commands for operators vs end users */
@@ -371,6 +405,7 @@ bot.command("help", async (ctx) => {
       "",
       "【管理员 / 运维】",
       "/setup — 配置清单（SETUP_MODE 时显示还差哪步）",
+      "/scripts — 话术与知识库新手清单（改 scripts.json / knowledge.md、/learn）",
       "/groupid — 在超级群里发送，获取 FORUM_GROUP_ID",
       "/whoami — 查看自己的 user id / chat id",
       "/learn — 审核待入库问答（入库话术 / 入库知识 / 忽略）",
@@ -383,8 +418,9 @@ bot.command("help", async (ctx) => {
         : "当前状态：已配置完成，可正常转达。",
       "",
       "图文安装：仓库 docs/SETUP.zh.md",
+      "话术引导：仓库 docs/SCRIPTS.zh.md（或本对话发 /scripts）",
       "",
-      "English: /setup checklist · /learn review Q&A · /groupid in forum group · /whoami debug ids.",
+      "English: /setup · /scripts · /learn · /groupid · /whoami.",
     ].join("\n"),
   );
 });
